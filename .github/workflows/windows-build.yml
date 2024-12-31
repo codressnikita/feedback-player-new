@@ -1,0 +1,87 @@
+name: Windows Build Tauri App
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write # Ensure the workflow can write contents (e.g., create releases)
+
+jobs:
+  tauri-build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Cache node_modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            **/node_modules
+            ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: rustfmt
+
+      - name: Install Tauri CLI Dependencies
+        run: npm install @tauri-apps/cli @tauri-apps/api
+
+      - name: Build the App
+        run: npm run tauri build
+        env:
+          # Necessary for Tauri to build Windows apps
+          RUSTFLAGS: "-C target-feature=+crt-static"
+
+      - name: Upload Artifacts
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-release
+          path: src-tauri/target/release/bundle/nsis
+
+      # - name: Check for Existing Release
+      #   id: check_release
+      #   uses: octokit/request-action@v2
+      #   with:
+      #     route: GET /repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # - name: Create Release if None Exists
+      #   id: create_release
+      #   if: steps.check_release.outputs.status != 200
+      #   uses: octokit/request-action@v2
+      #   with:
+      #     route: POST /repos/${{ github.repository }}/releases
+      #     release_name: Release ${{ github.ref_name }} # You can customize the release name
+      #     tag_name: ${{ github.ref_name }}
+      #     body: "Release for ${{ github.ref_name }}"
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # - name: Upload EXE to Release
+      #   if: steps.check_release.outputs.status == 200 || steps.create_release.outputs.status == 201
+      #   uses: actions/upload-release-asset@v1
+      #   with:
+      #     upload_url: ${{ steps.check_release.outputs.status == 200 && steps.check_release.outputs.data.upload_url || steps.create_release.outputs.data.upload_url }}
+      #     asset_path: src-tauri/target/release/bundle/nsis/*.exe # Adjust based on your actual path
+      #     asset_name: your-app-name-${{ github.ref }}.exe
+      #     asset_content_type: application/octet-stream
