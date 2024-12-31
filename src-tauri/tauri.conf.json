@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Vision of the museum",
+        "title": "Feedback player",
         "decorations": false,
         "fullscreen": true,
         "resizable": false
