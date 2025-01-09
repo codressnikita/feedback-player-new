@@ -1,24 +1,41 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import ReactPlayer from "react-player";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { Volume2, VolumeX, Pause, Play, RefreshCcw } from "lucide-react"; // Added icons for Play, Pause, and Reload
+import { Volume2, VolumeX, Pause, Play, RefreshCcw } from "lucide-react";
 
-export default function Page() {
+export default function FeedbackCarousel() {
   const [feedbacks, setFeedbacks] = useState([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(45);
+
+  // Autoplay with muted by default for browser autoplay policies
   const [isMuted, setIsMuted] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(true);
+
+  // Track retries if a video fails
   const [retryCount, setRetryCount] = useState(0);
 
-  // Fetch feedbacks from the server
+  const videoRef = useRef(null);
+  const nextVideoRef = useRef(null);
+
+  /**
+   * Fetch feedbacks from the server, refreshing every 15 minutes.
+   * Keep currentIndex if new data length is >= currentIndex.
+   */
   const fetchFeedbacks = async () => {
     try {
       const response = await axios.get(
         "https://feedback-server-rose.vercel.app/feedback"
       );
-      setFeedbacks(response.data);
+      const newFeedbacks = response.data || [];
+
+      if (newFeedbacks.length > 0) {
+        // Clamp the currentIndex to the new data length
+        setCurrentIndex((prevIndex) => prevIndex % newFeedbacks.length);
+      } else {
+        setCurrentIndex(0);
+      }
+      setFeedbacks(newFeedbacks);
     } catch (error) {
       console.error(
         "Failed to fetch videos:",
@@ -27,48 +44,78 @@ export default function Page() {
     }
   };
 
-  // Move to the next video on end
+  useEffect(() => {
+    fetchFeedbacks();
+    const interval = setInterval(fetchFeedbacks, 15 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  /**
+   * Move to the next video, loop to the first if we're at the end.
+   */
   const handleVideoEnd = () => {
-    setRetryCount(0); // Reset retries for the next video
-    setCurrentIndex((prevIndex) => (prevIndex + 1) % feedbacks.length);
+    setRetryCount(0);
+    setCurrentIndex((prev) => (prev + 1) % feedbacks.length);
   };
 
-  const handleError = () => {
-    if (retryCount < 100) {
+  /**
+   * Retry a few times on error, then alert.
+   */
+  const handleVideoError = () => {
+    if (retryCount < 5) {
+      console.log("Retrying video playback...");
       setRetryCount((prev) => prev + 1);
-      setTimeout(() => setIsPlaying(true), 2000); // Retry after 2 seconds
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.load();
+          videoRef.current.play().catch(() => {});
+        }
+      }, 2000);
     } else {
-      alert("Failed to play the video after 100 attempts.");
+      alert("Failed to play the video after multiple attempts.");
     }
   };
 
-  // Start playback after video URL changes or after retry
+  /**
+   * Preload the next video for smoother playback.
+   */
   useEffect(() => {
-    setIsPlaying(false); // Reset playing state
-    if (feedbacks[currentIndex]?.videoUrl) {
-      const playTimeout = setTimeout(() => setIsPlaying(true), 2000);
-      return () => clearTimeout(playTimeout); // Clean up timeout
+    if (feedbacks.length > 0) {
+      const nextIndex = (currentIndex + 1) % feedbacks.length;
+      const nextUrl = feedbacks[nextIndex]?.videoUrl;
+      if (nextVideoRef.current && nextUrl) {
+        nextVideoRef.current.src = nextUrl;
+        nextVideoRef.current.load();
+      }
     }
   }, [feedbacks, currentIndex]);
 
-  // Fetch feedbacks initially and periodically
+  /**
+   * Control isPlaying (play/pause).
+   */
   useEffect(() => {
-    fetchFeedbacks();
-    const interval = setInterval(fetchFeedbacks, 15 * 60 * 1000); // Refresh every 15 minute
-    return () => clearInterval(interval); // Clean up interval on unmount
-  }, []);
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.play().catch(() => {
+          console.log("Autoplay might be blocked — user gesture needed");
+        });
+      } else {
+        videoRef.current.pause();
+      }
+    }
+  }, [isPlaying]);
 
-  const { name, rating, videoUrl } = feedbacks[currentIndex] || {};
-
-  // Render stars for ratings
-  const renderStars = (rating) => {
+  /**
+   * Renders stars for the rating.
+   */
+  const renderStars = (rating = 0) => {
     return Array(5)
-      .fill(0)
-      .map((_, index) => (
+      .fill(null)
+      .map((_, idx) => (
         <span
-          key={index}
-          className={`text-xl ${
-            index < rating ? "text-yellow-500" : "text-gray-400"
+          key={idx}
+          className={`text-3xl ${
+            idx < rating ? "text-yellow-400" : "text-gray-500"
           }`}
         >
           ★
@@ -76,81 +123,87 @@ export default function Page() {
       ));
   };
 
+  // If we have no feedback data, just show placeholders
+  const { name, rating, videoUrl } = feedbacks[currentIndex] || {};
+
   return (
-    <div className="flex flex-col h-[100vh] bg-gradient-to-b from-gray-800 via-gray-900 to-black">
-      <div className="h-[100px] w-full flex items-center justify-between px-4 bg-gray-800 text-white">
-        {/* Name and Video Count */}
-        <div className="text-lg font-bold">
-          {name || "Loading..."}{" "}
-          <span className="text-gray-500 text-base text-light">
-            ({currentIndex + 1}/{feedbacks.length})
+    <div className="w-screen h-screen flex flex-col bg-black text-white">
+      {/* TOP SECTION (Name & Index in one line, plus rating below or inline) */}
+      <div className="flex-none h-1/5 flex flex-col items-center justify-center p-4">
+        {/* First line: Name (bold) and Index/Total (secondary) */}
+        <div className="flex items-baseline space-x-4">
+          <span className="text-4xl font-bold">{name || "Loading..."}</span>
+          <span className="text-xl text-gray-400">
+            (
+            {feedbacks.length > 0
+              ? `${currentIndex + 1} / ${feedbacks.length}`
+              : "0 / 0"}
+            )
           </span>
         </div>
 
-        {/* Centered Stars */}
-        <div className="flex flex-grow justify-center items-center">
-          {rating ? renderStars(rating) : "Fetching ratings..."}
-        </div>
-
-        {/* Buttons Stack to the Right */}
-        <div className="flex space-x-2">
-          {/* Volume Button */}
-          <button
-            onClick={() => setIsMuted(!isMuted)}
-            className="flex items-center justify-center w-10 h-10 bg-gray-700 rounded-full"
-            aria-label="Toggle Volume"
-          >
-            {isMuted ? (
-              <VolumeX className="text-white w-6 h-6" />
-            ) : (
-              <Volume2 className="text-white w-6 h-6" />
-            )}
-          </button>
-
-          {/* Play/Pause Button */}
-          <button
-            onClick={() => setIsPlaying(!isPlaying)}
-            className="flex items-center justify-center w-10 h-10 bg-gray-700 rounded-full"
-            aria-label={isPlaying ? "Pause" : "Play"}
-          >
-            {isPlaying ? (
-              <Pause className="text-white w-6 h-6" />
-            ) : (
-              <Play className="text-white w-6 h-6" />
-            )}
-          </button>
-
-          {/* Reload Button */}
-          <button
-            onClick={fetchFeedbacks}
-            className="flex items-center justify-center w-10 h-10 bg-gray-700 rounded-full"
-            aria-label="Reload Video"
-          >
-            <RefreshCcw className="text-white w-6 h-6" />
-          </button>
-        </div>
-      </div>
-
-      {/* Video Player */}
-      <div className="flex-grow flex items-center justify-center bg-gray-900">
-        {videoUrl ? (
-          <div className="relative max-h-[70%] max-w-[70%] rounded-lg overflow-hidden border-4 border-gradient-to-r from-blue-500 via-indigo-600 to-purple-700 shadow-2xl shadow-gray-800 p-2 bg-gradient-to-t from-gray-900 to-transparent">
-            <ReactPlayer
-              url={videoUrl}
-              playing={isPlaying}
-              muted={isMuted}
-              controls={false}
-              onEnded={handleVideoEnd}
-              onError={handleError}
-              width="100%"
-              height="100%"
-              preload="metadata"
-            />
-          </div>
+        {/* Second line: Rating */}
+        {rating ? (
+          <div className="flex space-x-1 mt-2">{renderStars(rating)}</div>
         ) : (
-          <div className="text-white">Loading video...</div>
+          <div className="text-xl text-gray-500 mt-2">Fetching rating...</div>
         )}
       </div>
+
+      {/* MIDDLE SECTION (Video fills entire area) */}
+      <div className="flex-1 relative">
+        {videoUrl ? (
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            muted={isMuted}
+            autoPlay
+            playsInline
+            onEnded={handleVideoEnd}
+            onError={handleVideoError}
+            // Covers full width and height, cropping if aspect doesn't match
+            className="absolute inset-0 w-full h-full object-fit bg-black"
+            preload="auto"
+          />
+        ) : (
+          <div className="flex items-center justify-center h-full text-2xl">
+            Loading video...
+          </div>
+        )}
+      </div>
+
+      {/* BOTTOM SECTION (Control Buttons) */}
+      <div className="flex-none h-1/5 flex items-center justify-center space-x-8">
+        {/* Mute/Unmute */}
+        <button
+          onClick={() => setIsMuted((prev) => !prev)}
+          className="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center"
+          title="Toggle Mute"
+        >
+          {isMuted ? <VolumeX size={36} /> : <Volume2 size={36} />}
+        </button>
+
+        {/* Play/Pause */}
+        <button
+          onClick={() => setIsPlaying((prev) => !prev)}
+          className="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center"
+          title="Play/Pause"
+        >
+          {isPlaying ? <Pause size={36} /> : <Play size={36} />}
+        </button>
+
+        {/* Refresh API */}
+        <button
+          onClick={fetchFeedbacks}
+          className="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center"
+          title="Refresh API"
+        >
+          <RefreshCcw size={36} />
+        </button>
+      </div>
+
+      {/* Hidden Preload Video */}
+      <video ref={nextVideoRef} style={{ display: "none" }} preload="auto" />
     </div>
   );
 }
